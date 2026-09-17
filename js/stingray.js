@@ -158,7 +158,7 @@ class Stingray {
     for (const other of others) {
       if (other === this) continue;
       const d = this.group.position.distanceTo(other.group.position);
-      const minD = (this.radius + other.radius) + 15;
+      const minD = (this.radius + other.radius) + 12;
       if (d < minD) {
         _v2.subVectors(this.group.position, other.group.position)
             .normalize()
@@ -169,7 +169,17 @@ class Stingray {
     }
     if (cnt > 0) {
       _v1.divideScalar(cnt);
-      this.targetDirection.add(_v1.multiplyScalar(0.05)).normalize();
+      // น้ำหนัก separation มากขึ้นตามจำนวนเพื่อนที่เบียดกัน → เกลี่ยตัวออก
+      this.targetDirection.add(_v1.multiplyScalar(0.03 + 0.02 * cnt)).normalize();
+    }
+
+    // ---- cohesion: ดึงเข้าหาศูนย์กลางเบาๆ → ไม่ไปกองที่ขอบ ----
+    const distFromCenter = this.group.position.length();
+    const soft = config.bounds * 0.55;    // เริ่มถูกดึงเมื่อเลยระยะนี้
+    if (distFromCenter > soft) {
+      const pull = ((distFromCenter - soft) / (config.bounds - soft));  // 0..1
+      _v2.copy(this.group.position).negate().normalize();
+      this.targetDirection.add(_v2.multiplyScalar(pull * 0.08)).normalize();
     }
 
     // ---- wander (แก้บั๊ก: direction ต้องตาม targetDirection จริง) ----

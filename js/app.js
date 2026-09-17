@@ -18,6 +18,7 @@ class App {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setSize(innerWidth, innerHeight);
     this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.9;
     document.body.appendChild(this.renderer.domElement);
 
@@ -29,7 +30,6 @@ class App {
       config.bloomStrength, 0.4, 0.21
     );
     this.composer.addPass(this.bloom);
-
     // ---- shared materials (สร้างครั้งเดียว — ทุกตัวใช้ร่วมกัน) ----
     this.bodyMat = new THREE.MeshStandardMaterial({
       map: createPolimaxxTexture(config.bodyColor),   // สีแดงต้นฉบับ
@@ -82,17 +82,22 @@ class App {
   }
 
   // ============================================================
-  // Day / Night — เปลี่ยนแบบค่อยๆ (interpolate ตามเวลา)
+  // Day / Night — เปลี่ยนทันที (ไม่มี fade)
   // ============================================================
-  applyPreset(mode) {
-    const p = DAYNIGHT[mode];
 
-    // ---- snapshot "ค่าที่อยู่บนจอตอนนี้" เป็นจุดเริ่มต้น ----
-    // ทำให้กดสลับกลางทางก็ต่อเนื่องจากค่าปัจจุบันได้ ไม่กระโดด
-    const from = this._captureCurrentEnv();
+  // อ่านค่า env ปัจจุบัน (สร้างจาก preset ครั้งแรก ถ้ายังไม่มี)
+  _readCurrentEnv() {
+    if (!this._env) {
+      const p = DAYNIGHT.dark;
+      this._env = this._presetToEnv(p, 'dark');
+    }
+    return this._env;
+  }
 
-    // ---- target ค่าปลายทาง ----
-    this._targetEnv = {
+  // แปลง preset → env object (ค่าตัวเลข + Color ใหม่ทุกครั้ง)
+  _presetToEnv(p, mode) {
+    const theme = (typeof THEME_COLORS !== 'undefined' && THEME_COLORS[mode]) || null;
+    return {
       bg: new THREE.Color(p.background),
       ambientColor: new THREE.Color(p.ambientColor),
       ambientIntensity: p.ambientIntensity,
@@ -102,12 +107,18 @@ class App {
       fogFar: p.fogFar,
       bloom: p.bloom ? config.bloomStrength : 0,
       eyeEmissive: p.eyeEmissive,
-      tailEmissive: p.tailEmissive
+      tailEmissive: p.tailEmissive,
+      // สีหาง/ตา ตามโหมด
+      tailColor: new THREE.Color(theme ? theme.tail : config.tailColor),
+      eyeColor:  new THREE.Color(theme ? theme.eye  : config.eyeColor)
     };
-    this._from = from;
+  }
 
-    // ---- เริ่มนับ progress ใหม่ (0 → 1) ----
-    this._envT = 0;
+  applyPreset(mode) {
+    const p = DAYNIGHT[mode];
+
+    // ---- apply ค่าทันที (ไม่มี fade) ----
+    this._env = this._presetToEnv(p, mode);
     envState.preset = mode;
 
     // ---- อัปเดต UI ทันที (ตัวหนังสือ/ไอคอน) ----
@@ -117,96 +128,47 @@ class App {
     document.getElementById('mode-toggle').classList.toggle('daylight-ui', isDay);
 
     if (this.gui) this.gui.controllersRecursive().forEach(c => c.updateDisplay());
+
+    // ---- เขียนลง scene จริงทันที ----
+    this.applyEnvToScene();
   }
 
-  // ดึงค่าปัจจุบันจาก scene จริง (ใช้เป็นจุดเริ่มของ transition)
-  _captureCurrentEnv() {
-    if (!this._env) {
-      // ครั้งแรกสุด — เริ่มจาก preset dark
-      const p = DAYNIGHT.dark;
-      this._env = {
-        bg: new THREE.Color(p.background),
-        ambientColor: new THREE.Color(p.ambientColor),
-        ambientIntensity: p.ambientIntensity,
-        sunIntensity: p.sunIntensity,
-        rimIntensity: p.rimIntensity,
-        fogNear: p.fogNear,
-        fogFar: p.fogFar,
-        bloom: p.bloom ? config.bloomStrength : 0,
-        eyeEmissive: p.eyeEmissive,
-        tailEmissive: p.tailEmissive
-      };
-      return this._env;
-    }
-    return {
-      bg: this._env.bg.clone(),
-      ambientColor: this._env.ambientColor.clone(),
-      ambientIntensity: this._env.ambientIntensity,
-      sunIntensity: this._env.sunIntensity,
-      rimIntensity: this._env.rimIntensity,
-      fogNear: this._env.fogNear,
-      fogFar: this._env.fogFar,
-      bloom: this._env.bloom,
-      eyeEmissive: this._env.eyeEmissive,
-      tailEmissive: this._env.tailEmissive
-    };
-  }
+  // เขียนค่า env ปัจจุบันลง scene (lights / fog / bg / bloom / emissive)
+  applyEnvToScene() {
+    const e = this._readCurrentEnv();
 
-  // เรียกทุกเฟรม — ไล่ค่าเข้าหา target แบบ easeInOutCubic (นุ่มเข้า-นุ่มออก)
-  updateEnvironment(delta) {
-    if (!this._targetEnv || !this._from) return;
-
-    const from = this._from;
-    const to = this._targetEnv;
-
-    // ---- cache ค่าปัจจุบัน (state ที่ lerp อยู่) ----
-    if (!this._env) this._env = this._captureCurrentEnv();
-
-    // ---- เลื่อน progress ตามเวลาจริง ----
-    // dur = จำนวนวินาทีที่ใช้เปลี่ยนเต็มที่
-    const dur = 12.0;
-    this._envT = Math.min(1, this._envT + (delta / 1000) / dur);
-
-    // easeInOutCubic → ช่วงต้นช้า ช่วงปลายนุ่ม ไม่มีสะดุดหัวท้าย
-    const x = this._envT;
-    const k = x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-
-    // ---- lerp + เขียนลง state ปัจจุบัน ----
-    const e = this._env;
-    e.bg.copy(from.bg).lerp(to.bg, k);
-    e.ambientColor.copy(from.ambientColor).lerp(to.ambientColor, k);
-    e.ambientIntensity = THREE.MathUtils.lerp(from.ambientIntensity, to.ambientIntensity, k);
-    e.sunIntensity     = THREE.MathUtils.lerp(from.sunIntensity, to.sunIntensity, k);
-    e.rimIntensity     = THREE.MathUtils.lerp(from.rimIntensity, to.rimIntensity, k);
-    e.fogNear          = THREE.MathUtils.lerp(from.fogNear, to.fogNear, k);
-    e.fogFar           = THREE.MathUtils.lerp(from.fogFar, to.fogFar, k);
-    e.bloom            = THREE.MathUtils.lerp(from.bloom, to.bloom, k);
-    e.eyeEmissive      = THREE.MathUtils.lerp(from.eyeEmissive, to.eyeEmissive, k);
-    e.tailEmissive     = THREE.MathUtils.lerp(from.tailEmissive, to.tailEmissive, k);
-
-    // ---- apply เข้า scene จริง ----
     this.scene.background.copy(e.bg);
     this.scene.fog.color.copy(e.bg);
-    this.scene.fog.near = e.fogNear;
-    this.scene.fog.far  = e.fogFar;
+    this.scene.fog.near = e.fogNear * config.fogScale;
+    this.scene.fog.far  = e.fogFar  * config.fogScale;
 
     this.ambient.color.copy(e.ambientColor);
     this.ambient.intensity = e.ambientIntensity;
     this.sun.intensity = e.sunIntensity;
     this.rim.intensity = e.rimIntensity;
 
-    // ---- Bloom: กลางวันต้อง "ไม่มีเลย" ----
-    // strength ค่อยๆ ลด + ปิด pass อัตโนมัติเมื่ออ่อนมากพอ
     this.bloom.strength = e.bloom;
-    this.bloom.enabled  = e.bloom > 0.001;
+
+    // ---- สีหาง/ตา ตามโหมด ----
+    // ★ สีจริงกำหนดที่ THEME_COLORS ใน js/config.js (dark / daylight) ★
+    // ตรงนี้แค่ copy ค่าจาก env ลง material ที่ใช้ร่วมกันทุกตัว
+    if (e.tailColor) this.tailMat.color.copy(e.tailColor);
+    if (e.eyeColor) {
+      this.eyeMat.color.copy(e.eyeColor);
+      this.eyeMat.emissive.copy(e.eyeColor);
+    }
 
     this.eyeMat.emissiveIntensity  = e.eyeEmissive;
     this.tailMat.emissiveIntensity = e.tailEmissive;
   }
 
+  // เรียกทุกเฟรม — เขียนค่า env ลง scene (ให้ GUI ปรับสดได้)
+  updateEnvironment(delta) {
+    this.applyEnvToScene();
+  }
+
   setupModeToggle() {
     document.getElementById('mode-toggle').addEventListener('click', () => {
-      autoCycle.timer = 0;   // กดเองแล้วนับเวลาใหม่ กันสลับซ้อน
       this.applyPreset(envState.preset === 'dark' ? 'daylight' : 'dark');
     });
   }
@@ -223,10 +185,12 @@ class App {
       let tries = 0;
       let pos;
       do {
-        const r = Math.random() * (config.bounds * 0.9);
-        const a = Math.random() * Math.PI * 2;
-        const py = (Math.random() - 0.5) * config.bounds * 0.6;
-        pos = new THREE.Vector3(Math.cos(a) * r, py, Math.sin(a) * r);
+        // สุ่มในปริมาตรลูกบาศก์ → กระจายทั่ว volume (ไม่เบียดขอบ)
+        pos = new THREE.Vector3(
+          (Math.random() * 2 - 1) * config.bounds * 0.7,
+          (Math.random() * 2 - 1) * config.bounds * 0.4,
+          (Math.random() * 2 - 1) * config.bounds * 0.7
+        );
         let ok = true;
         for (const p of placed) {
           if (pos.distanceTo(p) < config.spawnSeparation) { ok = false; break; }
@@ -279,14 +243,12 @@ class App {
 
       const envFolder = this.gui.addFolder('Environment');
       envFolder.add(envState, 'preset', ['dark', 'daylight']).name('Mode').onChange(m => {
-        autoCycle.timer = 0;
         this.applyPreset(m);
       });
-      envFolder.add(autoCycle, 'enabled').name('Auto Day/Night (30s)');
-      envFolder.add(autoCycle, 'interval', 5, 60, 1).name('Interval (s)');
       envFolder.add(config, 'bloomStrength', 0, 1.5, 0.01).name('Bloom (dark)').onChange(() => {
         // ค่าใหม่จะถูก lerp เข้าเองใน updateEnvironment ทุกเฟรม
       });
+      envFolder.add(config, 'fogScale', 0.2, 4.0, 0.05).name('Water Clarity (fog)');
 
       const motionFolder = this.gui.addFolder('Motion');
       motionFolder.add(config, 'flapSpeed', 0.1, 2.0).name('Flap Speed');
@@ -387,16 +349,7 @@ class App {
     if (delta > 200) delta = 200;          // กันกระโดดตอนแท็บหลับ
     const dt = delta / 16.667;             // 1.0 = 60fps — frame-rate independent
 
-    // ---- auto day/night cycle: 15 วิ/โหมด → 1 นาที = 4 ครั้ง ----
-    if (autoCycle.enabled) {
-      autoCycle.timer += delta / 1000;
-      if (autoCycle.timer >= autoCycle.interval) {
-        autoCycle.timer = 0;
-        this.applyPreset(envState.preset === 'dark' ? 'daylight' : 'dark');
-      }
-    }
-
-    // ---- ค่อยๆ เปลี่ยน environment (bg/fog/lights/bloom/emissive) ----
+    // ---- เขียนค่า environment ลง scene (bg/fog/lights/bloom/emissive) ----
     this.updateEnvironment(delta);
 
     this.frame++;

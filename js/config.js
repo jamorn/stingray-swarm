@@ -3,7 +3,7 @@
 // ============================================================
 
 const config = {
-  count: 45,
+  count: 25,
   bounds: 110,
   spawnSeparation: 10,
   minSpeed: 0.04,
@@ -21,34 +21,49 @@ const config = {
   tailOffsetZ: 0.48,
   timeScale: 1.0,
   bloomStrength: 0.6,      // ใช้เฉพาะตอนกลางคืน
+  fogScale: 1.0,           // ตัวคูณความใสของน้ำ (มาก = ไกล/ใส, น้อย = ขุ่น)
   // ---- สีต้นฉบับ ----
   bodyColor: '#ef0101',    // แดง
   eyeColor: '#3928b8',
-  tailColor: '#0e5167'
+  tailColor: '#0e5167'     // ค่าเริ่มต้น (ถูก override ตาม preset)
 };
 
-// ---- Auto day/night cycle: 30 วิ/โหมด → 1 นาที = 2 ครั้ง ----
+// ============================================================
+// ★ สีหางปลา / ตาปลา — แก้สีตรงนี้ ★
+// ------------------------------------------------------------
+// - dark     = ตอนกลางคืน (โหมดเริ่มต้น)
+// - daylight = ตอนกลางวัน
+// ค่า 'tail' = สีหาง, ค่า 'eye' = สีตา
+// สีเหล่านี้ถูก apply อัตโนมัติเมื่อสลับโหมด (ดู App.applyPreset)
+// ============================================================
+const THEME_COLORS = {
+  dark:     { tail: '#0e5167', eye: '#3928b8' },   // กลางคืน: ฟ้าเข้ม / ตาน้ำเงิน
+  daylight: { tail: '#e8622a', eye: '#3928b8' }    // กลางวัน: ส้มแดง ตัดกับน้ำเขียว #1f8a7a
+};
+
+// ---- Auto day/night cycle: ปิดไว้ — user กดเปลี่ยนเองเท่านั้น ----
 const autoCycle = {
-  enabled: true,
-  interval: 30,            // วินาทีต่อโหมด
+  enabled: false,
+  interval: 30,            // (ไม่ใช้แล้ว — เก็บไว้เผื่อเปิดทีหลัง)
   timer: 0
 };
 
 // ---- Presets กลางวัน / กลางคืน ----
+// อยู่ใต้ทะเลแต่ "ใส" — fogNear/Far ไกลขึ้นเพื่อให้มองเห็นปลาได้ลึก
 const DAYNIGHT = {
   dark: {
     background: '#000810',
     ambientColor: 0x4488ff, ambientIntensity: 1.0,
     sunIntensity: 0.8, rimIntensity: 1.5,
-    fogNear: 40, fogFar: 150,
+    fogNear: 150, fogFar: 520,   // ใสขึ้น (เดิม 40/150 — ขุ่นเกิน)
     bloom: true,            // กลางคืนเปิด bloom
     eyeEmissive: 2.0, tailEmissive: 1.5
   },
   daylight: {
-    background: '#88ccff',
-    ambientColor: 0xffffff, ambientIntensity: 1.6,
+    background: '#1f8a7a',
+    ambientColor: 0x8fd8e8, ambientIntensity: 1.6,
     sunIntensity: 1.2, rimIntensity: 0.6,
-    fogNear: 100, fogFar: 500,
+    fogNear: 220, fogFar: 900,   // ใสขึ้น (เดิม 100/500)
     bloom: false,           // กลางวัน NO BLOOM — ปิดทั้ง pass
     eyeEmissive: 0.0, tailEmissive: 0.0   // ไม่มี glow ตอนกลางวัน
   }
