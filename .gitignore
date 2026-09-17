@@ -1,0 +1,30 @@
+# ---- macOS ----
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+
+# ---- Editors / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---- Logs ----
+*.log
+npm-debug.log*
+
+# ---- Node (เผื่ออนาคต) ----
+node_modules/
+dist/
+build/
+
+# ---- Env / secrets ----
+.env
+.env.local
+*.local
+
+# ---- OS temp ----
+Thumbs.db
